@@ -2,11 +2,123 @@ use rand::prelude::*;
 use rand::distributions::WeightedIndex;
 
 const NUMSTUDENTS: u32 = 12000;
-const N: u32 = 15000;
+const N: usize = 15000;
 
+struct MyHashingHeap<T: Clone> {
+    primary_storage: Vec<Option<(u32, T)>>,
+    collision_count: u32
+}
 fn main() {
-    let UCID_list: Vec<String> = gen_ucids();
+    let ucid_list: Vec<String> = gen_ucids();
+    //let ucid_nums: Vec<u32> = ucid_list.iter().map(|ucid| ucid_to_int(ucid)).collect();
+    assert_eq!(12000, ucid_list.iter().map(|n| ucid_list.iter().filter(|x| n == *x).count()).filter(|&j| j == 1).count());
+    assert_eq!(12000, ucid_list.len());
 
+    let mut rng = thread_rng();
+
+    let mut ucid_heap: MyHashingHeap<String> = MyHashingHeap::instantiate();
+    for ucid in ucid_list.into_iter() {
+        ucid_heap.put(&ucid, ucid.clone());
+    }
+    println!("Collisions: {}", ucid_heap.collision_count);
+}
+
+fn ucid_to_int(ucid: &str) -> u32 {
+    let (initials, numeric) = ucid.split_at(2);
+    let mut alphabetics = initials.chars().map(|c| c.to_digit(36).unwrap() - 10);
+    return (alphabetics.next().unwrap() * 26 + alphabetics.next().unwrap()) * 26 * 10 * 10 * 10 + numeric.parse::<u32>().expect("bad num");
+}
+    
+impl<T: Clone> MyHashingHeap<T> {
+    pub fn instantiate() -> Self {
+       Self {
+           primary_storage: vec![None; N],
+           collision_count: 0
+       } 
+    }
+
+    fn hash(&mut self, key: u32) -> u32 {
+        let hash_key = key % N as u32;
+        if let Some(kv) = self.primary_storage[hash_key as usize].clone() {
+            if kv.0 != hash_key {
+                self.collision_count += 1;
+            }
+        }
+        hash_key
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<T> {
+        let key_as_num = ucid_to_int(key);
+        let k = self.hash(key_as_num);
+        let mut i = k;
+        while let Some(kv) = self.primary_storage[i as usize].clone() {
+            if kv.0 == key_as_num {
+                return Some(kv.1)
+            }
+            i = (i + 1) % N as u32;
+            assert_ne!(i, k);
+        }
+        None
+    }
+
+    pub fn put(&mut self, key: &str, val: T) -> Option<T> {
+        let key_as_num = ucid_to_int(key);
+        let k = self.hash(key_as_num);
+        let mut i = k;
+        while let Some(kv) = self.primary_storage[i as usize].clone() {
+            if kv.0 == key_as_num {
+                self.primary_storage[i as usize] = Some((key_as_num, val));
+                return Some(kv.1)
+            }
+            i = (i + 1) % N as u32;
+            assert_ne!(i, k);
+        }
+        self.primary_storage[i as usize] = Some((key_as_num, val));
+        None
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<T> {
+        let key_as_num = ucid_to_int(key);
+        let k = self.hash(key_as_num);
+        let mut i = k;
+        while let Some(kv) = self.primary_storage[i as usize].clone() {
+            if kv.0 == key_as_num {
+                self.primary_storage[i as usize] = None;
+                self.shift_begin(i);
+                return Some(kv.1);
+            }
+            i = (i + 1) % N as u32;
+            assert_ne!(i, k);
+        }
+        None
+    }
+
+
+    fn shift(&mut self, i: u32, mut min_valid: i32) {
+        while let Some(kv) = self.primary_storage[((min_valid - 1 + N as i32) % N as i32) as usize].clone() {
+            min_valid -= 1;
+        }
+        let mut last_available = i;
+        let mut s = 1;
+        while let Some(kv) = self.primary_storage[((i + s) % N as u32) as usize].clone() {
+            if kv.0 < i {
+                if min_valid < 0 || kv.0 as i32 >= min_valid {
+                    last_available = (i + s) % N as u32;
+                }
+            } else if min_valid < 0 && kv.0 as i32 >= N as i32 + min_valid {
+                last_available = (i + s) % N as u32;
+            }
+            s += 1;
+        }
+        if last_available != i {
+            self.primary_storage[i as usize] = self.primary_storage[last_available as usize].clone(); 
+            self.primary_storage[last_available as usize] = None;
+            self.shift(last_available, min_valid);
+        }
+    }
+    fn shift_begin(&mut self, i: u32) {
+        self.shift(i, i as i32);
+    }
 }
 
 fn gen_ucids() -> Vec<String> {
